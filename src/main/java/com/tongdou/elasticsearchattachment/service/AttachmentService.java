@@ -13,8 +13,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.search.SearchHits;
+import org.elasticsearch.search.sort.SortBuilder;
 import org.elasticsearch.transport.client.PreBuiltTransportClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,8 +104,8 @@ public class AttachmentService {
 
     }
 
-    public IndexResponse addDataByMap(String index, String type, String id, String pipeline, Map<String, Object> map) throws Exception {
-        IndexRequestBuilder indexRequestBuilder = this.getClient().prepareIndex(index, type, id);
+    public IndexResponse addDataByMap(String index, String type, String pipeline, Map<String, Object> map) throws Exception {
+        IndexRequestBuilder indexRequestBuilder = this.getClient().prepareIndex(index, type);
         if (StringUtils.isNotBlank(pipeline)) {
             indexRequestBuilder.setPipeline(pipeline);
         }
@@ -114,7 +113,7 @@ public class AttachmentService {
         return indexResponse;
     }
 
-    public SearchResponse searchData(String index, String type, QueryBuilder queryBuilder, QueryBuilder postFilter) throws
+    public SearchResponse searchData(String index, String type, QueryBuilder queryBuilder, QueryBuilder postFilter, SortBuilder sortBuilder) throws
             Exception {
         SearchRequestBuilder searchRequestBuilder = this.getClient().prepareSearch(index).setTypes(type).setSearchType(SearchType.DFS_QUERY_THEN_FETCH);
 
@@ -124,8 +123,12 @@ public class AttachmentService {
         if (postFilter != null) {
             searchRequestBuilder.setPostFilter(postFilter);     // Filter
         }
+        if (sortBuilder != null) {
+            searchRequestBuilder.addSort(sortBuilder);
+        }
         //.setFrom(0).setSize(60)
         searchRequestBuilder.setExplain(true);
+
         SearchResponse response = searchRequestBuilder.get();
 
         return response;
