@@ -1,12 +1,21 @@
 package com.tongdou.elasticsearchattachment.service;
 
+import com.tongdou.elasticsearchattachment.constant.Configurations;
 import org.apache.commons.lang3.StringUtils;
+import org.elasticsearch.action.ActionFuture;
+import org.elasticsearch.action.admin.indices.create.CreateIndexAction;
+import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
+import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsResponse;
+import org.elasticsearch.action.admin.indices.get.GetIndexResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.ingest.*;
 import org.elasticsearch.action.search.SearchRequestBuilder;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
+import org.elasticsearch.client.IndicesAdminClient;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.settings.Settings;
@@ -19,8 +28,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.Resource;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 
 @Service
@@ -28,12 +39,14 @@ public class AttachmentService {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AttachmentService.class);
 
+    @Resource
+    private Configurations config;
+
     private TransportClient client = null;
 
     static {
         System.setProperty("es.set.netty.runtime.available.processors", "false");
     }
-
 
     public TransportClient getClient() throws Exception {
         if (this.client == null) {
@@ -49,22 +62,69 @@ public class AttachmentService {
 
     private TransportClient init() throws Exception {
         client = new PreBuiltTransportClient(Settings.EMPTY)
-                .addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
+                .addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName(config.getIp()), config.getPort()));
         return client;
     }
 
     /**
-     * 创建管道
+     * 创建索引
      *
-     * @param pipeLineName 管道名称
-     * @param filedName    字段名称
+     * @param index 索引名称
+     * @param type  类型
      * @return
      */
-    public WritePipelineResponse createPipeLine(String pipeLineName, String filedName) throws Exception {
+    public CreateIndexResponse createIndex(String index, String type) throws Exception {
+        CreateIndexRequest request = new CreateIndexRequest(index);
+
+        // setting
+        request.settings(Settings.builder()
+                .put("index.number_of_shards", 3)
+                .put("index.number_of_replicas", 2)
+        );
+
+        // properties
+        Map<String, Object> properties = new HashMap<>();
+        Map<String, Object> createTime = new HashMap<>();
+        createTime.put("type", "date");
+        properties.put("createTime", createTime);
+        Map<String, Object> filename = new HashMap<>();
+        filename.put("type", "text");
+        properties.put("filename", filename);
 
 
-        if (StringUtils.isBlank(filedName)) {
-            filedName = "data";
+        // mapping
+        Map<String, Object> mapping = new HashMap<>();
+        mapping.put("properties", properties);
+        request.mapping(type, mapping);
+
+        CreateIndexResponse response = this.getClient().execute(CreateIndexAction.INSTANCE, request).actionGet();
+        return response;
+    }
+
+    /**
+     * 查询index
+     *
+     * @return
+     */
+    public IndicesExistsResponse getIndex(String index) throws Exception {
+        IndicesAdminClient adminClient = this.getClient().admin().indices();
+        IndicesExistsRequest request = new IndicesExistsRequest(index);
+        IndicesExistsResponse response = adminClient.exists(request).actionGet();
+        return response;
+    }
+
+
+    /**
+     * 创建pipeline
+     *
+     * @param pipelineId    pipeline名称
+     * @param pipelineField 字段名称
+     * @return
+     */
+    public WritePipelineResponse createPipeline(String pipelineId, String pipelineField) throws Exception {
+
+        if (StringUtils.isBlank(pipelineField)) {
+            pipelineField = "data";
         }
 
         String source = "{" +
@@ -72,17 +132,17 @@ public class AttachmentService {
                 " \"processors\":[" +
                 " {" +
                 "    \"attachment\":{" +
-                "        \"field\":\"" + filedName + "\"," +
+                "        \"field\":\"" + pipelineField + "\"," +
                 "        \"indexed_chars\" : -1," +
                 "        \"ignore_missing\":true" +
                 "     }" +
                 " }," +
                 " {" +
-                "     \"remove\":{\"field\":\"" + filedName + "\"}" +
+                "     \"remove\":{\"field\":\"" + pipelineField + "\"}" +
                 " }]}";
 
         PutPipelineRequest request = new PutPipelineRequest(
-                pipeLineName,
+                pipelineId,
                 new BytesArray(source.getBytes(StandardCharsets.UTF_8)),
                 XContentType.JSON
         );
@@ -93,15 +153,15 @@ public class AttachmentService {
     }
 
     /**
-     * 查询管道
+     * 查询pipeline
      *
+     * @param pipelineId id
      * @return
      */
-    public GetPipelineResponse getPipeLines() throws Exception {
-        GetPipelineRequest request = new GetPipelineRequest();
+    public GetPipelineResponse getPipeline(String pipelineId) throws Exception {
+        GetPipelineRequest request = new GetPipelineRequest(pipelineId);
         GetPipelineResponse response = this.getClient().execute(GetPipelineAction.INSTANCE, request).actionGet();
         return response;
-
     }
 
     public IndexResponse addDataByMap(String index, String type, String pipeline, Map<String, Object> map) throws Exception {
